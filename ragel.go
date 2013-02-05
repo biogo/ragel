@@ -168,3 +168,131 @@ func (r *AppendReader) BackupTo(b byte) error {
 	*r.pe = i + 1
 	return nil
 }
+
+// BlockScanner implements reading defined block size data into a provided slice and
+// updating ragel state machine variables.
+type BlockScanner struct {
+	r      io.Reader
+	data   []byte
+	buf    []byte
+	p, pe  *int
+	ts, te *int
+	act    *int
+	eof    *int
+}
+
+// NewBlockScanner returns a new BlockScanner that reads from r. Pointers to the ragel
+// state machine variables p, pe, ts, te and eof, and a data slice must be provided. These
+// variables are updated on each read. An error is returned if a pointer to any of the
+// required ragel variables is nil.
+func NewBlockScanner(r io.Reader, p, pe, ts, te, eof *int, data []byte) (*BlockScanner, error) {
+	if data == nil || p == nil || pe == nil || ts == nil || te == nil || eof == nil {
+		return nil, ErrNilData
+	}
+	*eof = -1
+	return &BlockScanner{
+		r:    r,
+		data: data,
+		buf:  data[:0],
+		p:    p,
+		pe:   pe,
+		ts:   ts,
+		te:   te,
+		eof:  eof,
+	}, nil
+}
+
+// Buffered returns the number of bytes that can be processed in the current block.
+func (r *BlockScanner) Buffered() int { return len(r.buf) - *r.ts }
+
+// Read reads data from the underlying reader until the ragel data variable is full,
+// first moving read but unprocessed data to the start of the data array if the ts ragel
+// variable is non-zero. Read returns the number of bytes read and any error encountered
+// during the read. ErrBufferFull is returned if the data variable is full prior to
+// reading and after any potential data shift. Read sets the ragel eof variable to the
+// value of pe if the read returns an io.EOF error.
+func (r *BlockScanner) Read() (n int, err error) {
+	ts, data := *r.ts, r.data
+	if ts != 0 {
+		copy(data, data[ts:len(r.buf)])
+		*r.p -= ts
+		*r.pe -= ts
+		*r.ts = 0
+		*r.te -= ts
+		r.buf = r.buf[0 : len(r.buf)-ts]
+	}
+	if len(r.buf) == cap(r.buf) {
+		return 0, ErrBufferFull
+	}
+	n, err = r.r.Read(data[len(r.buf):])
+	r.buf = r.buf[:len(r.buf)+n]
+	*r.pe = len(r.buf)
+	if err == io.EOF {
+		*r.eof = *r.pe
+	}
+	return n, err
+}
+
+// AppendScanner implements reading arbitrarily sized, byte delimited data into a slice and
+// updating ragel state machine variables.
+type AppendScanner struct {
+	r      *bufio.Reader
+	delim  byte
+	data   *[]byte
+	p, pe  *int
+	ts, te *int
+	eof    *int
+}
+
+// NewAppendScanner returns a new AppenReader that reads from r. Pointers to the ragel
+// state machine variables p, pe, ts, te, eof and data must be provided. These variables
+// are updated on each read. An error is returned if a pointer to any of the required
+// ragel variables is nil.
+func NewAppendScanner(r *bufio.Reader, p, pe, ts, te, eof *int, data *[]byte, delim byte) (*AppendScanner, error) {
+	if data == nil || p == nil || pe == nil || ts == nil || te == nil || eof == nil {
+		return nil, ErrNilData
+	}
+	*data, *eof = (*data)[:0], -1
+	return &AppendScanner{
+		r:     r,
+		delim: delim,
+		data:  data,
+		p:     p,
+		pe:    pe,
+		ts:    ts,
+		te:    te,
+		eof:   eof,
+	}, nil
+}
+
+// Buffered returns the number of bytes that can be processed in the current block.
+func (r *AppendScanner) Buffered() int { return len(*r.data) - *r.ts }
+
+// Read reads data from the underlying reader until the the first instant of the
+// AppendScanner's delim byte growing the data slice as necessary, but first moving
+// read unprocessed data to the start of the data array if the ts ragel variable is
+// non-zero. Read returns the number of bytes read and any error encountered during
+// the read. io.ErrUnexpectedEOF is returned if data does not end in the specified
+// delimeter. Read sets the ragel eof variable to the value of pe if the read returns
+// an io.EOF or io.ErrUnexpectedEOF error.
+func (r *AppendScanner) Read() (n int, err error) {
+	ts, data := *r.ts, *r.data
+	if ts != 0 {
+		copy(data, data[ts:len(data)])
+		*r.p -= ts
+		*r.pe -= ts
+		*r.ts = 0
+		*r.te -= ts
+		data = data[0 : len(data)-ts]
+	}
+	line, err := r.r.ReadBytes(r.delim)
+	*r.data = append(data, line...)
+	*r.pe = len(*r.data)
+	if err == io.EOF {
+		if len(line) != 0 {
+			err = io.ErrUnexpectedEOF
+		}
+		*r.eof = *r.pe
+	}
+	return n, err
+}
