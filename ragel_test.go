@@ -6,8 +6,8 @@ package ragel
 
 import (
 	"bufio"
+	"gopkg.in/check.v1"
 	"io"
-	check "launchpad.net/gocheck"
 	"strings"
 	"testing"
 )
