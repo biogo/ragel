@@ -5,11 +5,11 @@
 package ragel_test
 
 import (
-	"code.google.com/p/biogo.ragel"
-
 	"bufio"
 	"fmt"
 	"strings"
+
+	"github.com/biogo/ragel"
 )
 
 var r = strings.NewReader("Hello,\nWorld!\n")
